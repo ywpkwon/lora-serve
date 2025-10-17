@@ -1,0 +1,14 @@
+
+version: "3.9"
+services:
+  lora-serve:
+    build: ..
+    ports: ["8000:8000"]
+    environment:
+      - MODEL_ID=meta-llama/Llama-3-8b
+      - ADAPTER_ROOT=/app/examples/adapters
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]

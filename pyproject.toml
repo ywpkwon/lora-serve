@@ -1,0 +1,38 @@
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lora-serve"
+version = "0.0.1"
+description = "Async multi-tenant LLM inference with dynamic LoRA loading, KV-cache reuse, and speculative decoding."
+authors = [{name = "You"}]
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.2",
+    "transformers>=4.43",
+    "accelerate>=0.33",
+    "peft>=0.11",
+    "torch>=2.3",
+    "numpy>=1.26",
+    "prometheus-client>=0.20",
+    "opentelemetry-api>=1.25.0",
+    "opentelemetry-sdk>=1.25.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5.7",
+    "mypy>=1.11",
+]
+
+[tool.setuptools.packages.find]
+where = [""]
+include = ["lora_serve*"]
