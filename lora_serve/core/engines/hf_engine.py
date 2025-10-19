@@ -2,8 +2,13 @@
 # Minimal HF-backed engine stub (no actual HF load for scaffold)
 from typing import List, AsyncIterator
 import asyncio
+import logging
 from ...core.types import GenerateRequest, GenerateResult, VerifyRequest, VerifyResult
 from .engine import IEngine
+
+
+logger = logging.getLogger(__name__)
+
 
 class HFEngine(IEngine):
     def __init__(self):
@@ -19,11 +24,15 @@ class HFEngine(IEngine):
         self.adapters.pop(adapter_id, None)
 
     async def generate_batch(self, reqs: List[GenerateRequest]) -> List[GenerateResult]:
+        logger.debug("generate_batch called with %d reqs", len(reqs))
         # Fake generation for scaffold
         out = []
         for r in reqs:
             text = f"[adapter={r.adapter_id or 'none'}] {r.prompt} ... (generated)"
             out.append(GenerateResult(text=text, tokens=min(r.max_tokens, 32)))
+
+        # logger.debug("Tokenizing %d prompts", len(prompts))
+        # logger.debug("Model.generate done (batch=%d)", len(prompts))
         await asyncio.sleep(0)
         return out
 
