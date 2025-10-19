@@ -3,16 +3,41 @@
 from typing import List, AsyncIterator
 import asyncio
 import logging
+import torch
 from ...core.types import GenerateRequest, GenerateResult, VerifyRequest, VerifyResult
 from .engine import IEngine
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
 logger = logging.getLogger(__name__)
 
 
 class HFEngine(IEngine):
-    def __init__(self):
-        self.adapters: dict[str, str] = {}
+    def __init__(self, model_id: str, dtype: str = "bfloat16", device: str = "cuda"):
+        self.model_id = model_id
+        self.device = device if torch.cuda.is_available() else "cpu"
+
+        # dtype handling
+        _dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "fp16": torch.float16}.get(dtype, torch.float16)
+
+        logger.info("Loading base model %s (dtype=%s, device=%s)", model_id, _dtype, self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True, trust_remote_code=True)
+        if self.tokenizer.pad_token_id is None and self.tokenizer.eos_token_id is not None:
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            dtype=_dtype,
+            device_map="auto" if self.device == "cuda" else None,
+            trust_remote_code=True,
+        )
+        self.model.eval()
+        torch.set_grad_enabled(False)
+        torch.backends.cuda.matmul.allow_tf32 = True
+
+        # adapter_id -> attached flag/path
+        self._adapters: dict[str, str] = {}
+        self._adapter_lock = asyncio.Lock()
 
     async def warmup(self) -> None:
         await asyncio.sleep(0)
@@ -25,6 +50,73 @@ class HFEngine(IEngine):
 
     async def generate_batch(self, reqs: List[GenerateRequest]) -> List[GenerateResult]:
         logger.debug("generate_batch called with %d reqs", len(reqs))
+        prompts = [r.prompt for r in reqs]
+        if not prompts:
+            return []
+
+        # Decide generation knobs for the whole batch (simple policy)
+        max_new = max(max(1, r.max_tokens) for r in reqs)
+        # If ANY request wants sampling (temperature > 0), enable sampling
+        do_sample = any(r.temperature and r.temperature > 0 for r in reqs)
+        # Since torch generate() can’t take per-row temperatures, pick a batch value.
+        # Easiest: use the max across reqs when sampling is on.
+        batch_temp = max((r.temperature or 0.0) for r in reqs) if do_sample else None
+        batch_top_p = max((r.top_p or 0.0) for r in reqs) if do_sample else None
+
+        # Tokenize as a padded batch
+        tok = self.tokenizer(
+            prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,  # truncate *inputs* if needed to model's max position
+        )
+        input_ids = tok["input_ids"].to(self.model.device)
+        attn_mask = tok["attention_mask"].to(self.model.device)
+        input_len = input_ids.shape[1]
+        logger.debug("tokens ready")
+
+        try:
+            with torch.inference_mode():
+                outputs = self.model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attn_mask,
+                    max_new_tokens=max_new,
+                    do_sample=do_sample,
+                    temperature=batch_temp,
+                    top_p=batch_top_p,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                )
+        except RuntimeError as e:
+            # Very basic OOM backoff: try halving max_new once.
+            if "CUDA out of memory" in str(e) and max_new > 1:
+                logger.warning("OOM at max_new=%d; retrying with %d", max_new, max_new // 2)
+                with torch.inference_mode():
+                    outputs = self.model.generate(
+                        input_ids=input_ids,
+                        attention_mask=attn_mask,
+                        max_new_tokens=max_new // 2,
+                        do_sample=do_sample,
+                        temperature=batch_temp,
+                        top_p=batch_top_p,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                    )
+            else:
+                logger.exception("generate_batch failed")
+                raise
+
+        # Split the batched outputs row-wise and decode only *new* tokens
+        results: list[GenerateResult] = []
+        for i in range(outputs.shape[0]):
+            out_ids = outputs[i]
+            # Guard against edge cases (e.g., EOS at step 0)
+            new_slice = out_ids[input_len:] if out_ids.shape[0] > input_len else out_ids[:0]
+            text = self.tokenizer.decode(new_slice, skip_special_tokens=True)
+            results.append(GenerateResult(text=text, tokens=len(new_slice)))
+        logger.debug("generate_batch: done (max_new=%d, do_sample=%s)", max_new, do_sample)
+        return results
+
         # Fake generation for scaffold
         out = []
         for r in reqs:

@@ -15,7 +15,7 @@ api_router = APIRouter()
 
 # Global singletons for scaffold
 _adapters = LoRAAdapterManager(base_dir=__import__("pathlib").Path(settings.adapter_root))
-_engine = HFEngine()
+_engine = HFEngine(model_id=settings.model_id, dtype=settings.dtype, device=settings.device)
 _queues = TenantQueues()
 _batcher = DynamicBatcher(_engine, _queues, settings.max_batch_tokens, settings.max_wait_ms)
 asyncio.get_event_loop().create_task(_batcher.run_forever())
