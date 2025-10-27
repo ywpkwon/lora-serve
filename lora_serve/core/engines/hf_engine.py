@@ -8,6 +8,13 @@ from ...core.types import GenerateRequest, GenerateResult, VerifyRequest, Verify
 from .engine import IEngine
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
+try:
+    from peft import PeftModel  # core wrapper that can hold/load adapters
+    _HAS_PEFT = True
+except Exception:
+    PeftModel = None  # type: ignore
+    _HAS_PEFT = False
+
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +50,85 @@ class HFEngine(IEngine):
         await asyncio.sleep(0)
 
     async def attach_adapter(self, adapter_id: str, path: str) -> None:
-        self.adapters[adapter_id] = str(path)
+        if not _HAS_PEFT:
+            logger.warning("PEFT not installed; skipping adapter %s", adapter_id)
+            return
+
+        async with self._adapter_lock:
+            # Already have this adapter registered?
+            existing = []
+            if isinstance(self.model, PeftModel) and hasattr(self.model, "peft_config"):
+                existing = list(getattr(self.model, "peft_config", {}).keys())
+
+            if not isinstance(self.model, PeftModel):
+                # First adapter: wrap base model with PEFT and register under adapter_id
+                try:
+                    self.model = PeftModel.from_pretrained(
+                        self.model,
+                        path,
+                        adapter_name=adapter_id,     # <-- key line
+                        is_trainable=False,          # inference
+                    )
+                except TypeError:
+                    # Older PEFT: no adapter_name kw; it will be "default"
+                    self.model = PeftModel.from_pretrained(self.model, path)
+            else:
+                # Model already PEFT-wrapped: load this adapter if missing
+                if adapter_id not in existing:
+                    # Register the new adapter under adapter_id
+                    kwargs = {"adapter_name": adapter_id}
+                    try:
+                        self.model.load_adapter(path, **kwargs)
+                    except TypeError:
+                        # Older PEFT signatures (no adapter_name kw)
+                        self.model.load_adapter(path)
+                        # It likely registered as "default" – we'll handle selection below
+
+            # Now select the adapter safely
+            try:
+                names = list(getattr(self.model, "peft_config", {}).keys())
+                if adapter_id in names:
+                    self.model.set_adapter(adapter_id)
+                elif "default" in names:
+                    logger.debug("Adapter '%s' not registered; falling back to 'default'", adapter_id)
+                    self.model.set_adapter("default")
+                else:
+                    raise RuntimeError(f"No selectable adapters found: have {names}")
+            except Exception as e:
+                logger.exception("set_adapter failed for '%s' (have=%s): %s", adapter_id, existing, e)
+                raise
+
+            # book-keeping
+            self._adapters[adapter_id] = str(path)
+            logger.info("Adapter '%s' active (available=%s)", adapter_id, list(self.model.peft_config.keys()))
 
     async def detach_adapter(self, adapter_id: str) -> None:
-        self.adapters.pop(adapter_id, None)
+        """Detach and free a specific LoRA adapter if loaded."""
+        if not _HAS_PEFT or not isinstance(self.model, PeftModel):
+            logger.debug("No PEFT model attached; nothing to detach.")
+            return
+
+        async with self._adapter_lock:
+            if adapter_id not in self._adapters:
+                logger.debug("Adapter %s not found in engine cache", adapter_id)
+                return
+
+            logger.info("Detaching adapter %s", adapter_id)
+            try:
+                if hasattr(self.model, "unload_adapter"):
+                    self.model.unload_adapter(adapter_id)
+                else:
+                    # Fallback: clear from config dicts
+                    if hasattr(self.model, "peft_config") and adapter_id in self.model.peft_config:
+                        del self.model.peft_config[adapter_id]
+            except Exception as e:
+                logger.warning("Failed to unload adapter %s: %s", adapter_id, e)
+
+            # remove from cache and LRU
+            self._adapters.pop(adapter_id, None)
+
+            # optional: torch.cuda.empty_cache() if GPU mem high
+            # import torch; torch.cuda.empty_cache()
 
     async def generate_batch(self, reqs: List[GenerateRequest]) -> List[GenerateResult]:
         logger.debug("generate_batch called with %d reqs", len(reqs))
@@ -73,7 +155,7 @@ class HFEngine(IEngine):
         input_ids = tok["input_ids"].to(self.model.device)
         attn_mask = tok["attention_mask"].to(self.model.device)
         input_len = input_ids.shape[1]
-        logger.debug("tokens ready")
+        logger.debug("tokens ready. going to generation inference.")
 
         try:
             with torch.inference_mode():

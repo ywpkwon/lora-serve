@@ -4,6 +4,10 @@ from .queue import TenantQueues
 from ..core.types import GenerateRequest
 
 
+def same_adapter(entry, first_adapter):
+    return getattr(entry.req, "adapter_id", None) == first_adapter
+
+
 async def choose_batch(queues: TenantQueues, max_batch_tokens: int, max_wait_ms: int):
     # naive: pick first available one-by-one
     batch = []
@@ -13,6 +17,7 @@ async def choose_batch(queues: TenantQueues, max_batch_tokens: int, max_wait_ms:
 
     batch = [first]
     budget = _rough_tokens(first.req)
+    first_adapter = getattr(first.req, "adapter_id", None)
 
     # Fill until budget or wait window reached
     # Small spin to let a few more arrive within wait window
@@ -29,6 +34,10 @@ async def choose_batch(queues: TenantQueues, max_batch_tokens: int, max_wait_ms:
             # nothing ready; give others a moment to enqueue
             await asyncio.sleep(0.001)
             continue
+        if not same_adapter(nxt, first_adapter):
+            # push it back for a later tick
+            queues.push(getattr(nxt.req, "tenant_id", "default") or "default", nxt.req)
+            break
         new_cost = _rough_tokens(nxt.req)
         if budget + new_cost > max_batch_tokens:
             # too big; put it back? (naive policy: run it next tick → we just keep it out)
@@ -38,7 +47,7 @@ async def choose_batch(queues: TenantQueues, max_batch_tokens: int, max_wait_ms:
             # (Because we didn't remove it; but we actually did pop() it.
             # For minimalism, let's keep it and run this batch; then push it back.)
             # Push-back:
-            queues.push("default", nxt.req)  # if you track tenant_id, use it here
+            queues.push(getattr(nxt.req, "tenant_id", "default") or "default", nxt.req)
             break
         batch.append(nxt)
         budget += new_cost
