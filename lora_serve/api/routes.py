@@ -1,6 +1,7 @@
 
 import asyncio
 import logging
+from sse_starlette.sse import EventSourceResponse
 from fastapi import APIRouter, Depends, HTTPException
 from ..core.config import settings
 from ..core.types import GenerateRequest
@@ -37,3 +38,41 @@ async def generate(body: GenerateIn):
     req = GenerateRequest(**body.model_dump())
     res = await _batcher.enqueue(req)
     return GenerateOut(text=res.text, tokens=res.tokens)
+
+
+@api_router.post("/generate/stream")
+async def generate_stream(body: GenerateIn):
+    # 1) Validate quick things (adapter exists, ranges, etc.)
+    if body.temperature is not None and body.temperature < 0:
+        raise HTTPException(400, "temperature must be >= 0")
+
+    adapter_id = body.adapter_id
+    if adapter_id:
+        try:
+            path = await _adapters.resolve_path(adapter_id)  # existence check only
+        except FileNotFoundError:
+            raise HTTPException(404, f"Adapter '{adapter_id}' not found")
+        # Attach now (single-request path; ok to do here)
+        await _engine.attach_adapter(adapter_id, str(path))
+
+    req = GenerateRequest(
+        prompt=body.prompt,
+        max_tokens=body.max_tokens,
+        temperature=body.temperature,
+        top_p=body.top_p,
+        adapter_id=adapter_id,
+        tenant_id=body.tenant_id,
+        stream=True,
+    )
+
+    async def event_gen():
+        # Optional: initial hello
+        yield {"event": "start", "data": ""}
+
+        async for chunk in _engine.stream_generate_single(req):
+            # OpenAI-style: each line is `data: <json>`
+            yield {"data": chunk}
+
+        yield {"event": "end", "data": "[DONE]"}
+
+    return EventSourceResponse(event_gen())
