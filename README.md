@@ -1,12 +1,12 @@
 
 # LoRAServe
 
-LoRAServe is a lightweight, educational project exploring how modern LLM inference systems (like vLLM and SGLang) work under the hood — from dynamic batching and adapter hot-loading to streaming responses and KV-cache reuse.
+LoRAServe is a lightweight, educational project exploring how modern LLM inference systems (like vLLM and SGLang) work under the hood -- from dynamic batching and adapter hot-loading to streaming responses and KV-cache reuse.
 
 # Overview
 
 This repository is a side project to understand and re-implement key design patterns in large-model serving infrastructure.
-It’s not a production service — the focus is on clarity, modularity, and learning-by-doing.
+It's not a production service -- the focus is on clarity, modularity, and learning-by-doing.
 
 LoRAServe aims to demystify how real LLM engines manage:
 - Dynamic batching and request queues
@@ -103,12 +103,12 @@ curl -N -H "Content-Type: application/json" \
 
 # Dependencies
 
-- FastAPI / Uvicorn — REST API layer
-- Transformers — model/tokenizer backend
-- PEFT — LoRA adapter handling
-- torch — inference runtime
-- sse-starlette — streaming (Server-Sent Events)
-- pydantic — configuration and schema validation
+- FastAPI / Uvicorn: REST API layer
+- Transformers: model/tokenizer backend
+- PEFT: LoRA adapter handling
+- torch: inference runtime
+- sse-starlette: streaming (Server-Sent Events)
+- pydantic: configuration and schema validation
 
 # License & Disclaimer
 
