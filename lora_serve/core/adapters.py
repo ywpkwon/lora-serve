@@ -10,6 +10,13 @@ class LoRAAdapterManager:
         self.loaded: OrderedDict[str, Path] = OrderedDict()
         self._lock = asyncio.Lock()
 
+    async def resolve_path(self, adapter_id: str) -> Path:
+        # existence-only; no cache mutation
+        path = self.base_dir / adapter_id
+        if not path.exists():
+            raise FileNotFoundError(path)
+        return path
+
     async def ensure_loaded(self, adapter_id: str) -> Path:
         async with self._lock:
             if adapter_id in self.loaded:

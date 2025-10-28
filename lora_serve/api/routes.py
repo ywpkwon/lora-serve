@@ -28,7 +28,7 @@ async def generate(body: GenerateIn):
     # validate adapter up front
     if body.adapter_id:
         try:
-            path = await _adapters.ensure_loaded(body.adapter_id)  # may raise FileNotFoundError
+            path = await _adapters.resolve_path(body.adapter_id)  # existence check only
         except FileNotFoundError:
             # 404 reads better than 400: it's a missing resource (adapter)
             raise HTTPException(status_code=404, detail=f"Adapter '{body.adapter_id}' not found")
@@ -51,7 +51,7 @@ async def generate_stream(body: GenerateIn):
         try:
             path = await _adapters.resolve_path(adapter_id)  # existence check only
         except FileNotFoundError:
-            raise HTTPException(404, f"Adapter '{adapter_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Adapter '{adapter_id}' not found")
         # Attach now (single-request path; ok to do here)
         await _engine.attach_adapter(adapter_id, str(path))
 
