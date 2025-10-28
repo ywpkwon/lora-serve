@@ -44,6 +44,10 @@ Each layer is intentionally minimal and commented so you can trace the full path
 # ⚙️ Usage (Local)
 ```bash
 
+# Prepare virtual env
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+
 # Install dependencies
 pip install -r requirements.txt
 
@@ -51,7 +55,8 @@ pip install -r requirements.txt
 cp .env.example .env
 
 # Launch server
-uvicorn lora_serve.api.app:app --reload
+# - Add LORASERVE_LOGLEVEL=DEBUG in front to have DEBUG level logging
+uvicorn lora_serve.app:app --host 0.0.0.0 --port 8000 --reload
 
 # Run a simple generation
 curl -s -H "Content-Type: application/json" \
@@ -65,7 +70,6 @@ Optional: run a streaming request (real-time token output)
 curl -N -H "Content-Type: application/json" \
   -d '{"prompt":"Explain LoRA in one line","max_tokens":64,"stream":true}' \
   http://localhost:8000/v1/generate/stream
-```
 ```
 
 # 🧩 Example Goals for Learners
