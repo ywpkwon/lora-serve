@@ -5,6 +5,7 @@ import asyncio
 import logging
 import threading
 import torch
+import threading
 from ...core.types import GenerateRequest, GenerateResult, VerifyRequest, VerifyResult
 from .engine import IEngine
 from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
@@ -274,6 +275,63 @@ class HFEngine(IEngine):
                 yield GenerateResult(text="...", tokens=1)
                 await asyncio.sleep(0.05)
         return [ _one(r) for r in reqs ]
+
+    async def stream_generate_single(self, req: GenerateRequest):
+        """
+        Async generator yielding text chunks as they are produced.
+        NOTE: single-request path (no batching).
+        """
+        prompt = req.prompt
+        do_sample = (req.temperature or 0) > 0
+        tok = self.tokenizer(
+            [prompt], return_tensors="pt", padding=False, truncation=True
+        )
+        input_ids = tok["input_ids"].to(self.model.device)
+        attn_mask = tok.get("attention_mask")
+        if attn_mask is not None:
+            attn_mask = attn_mask.to(self.model.device)
+
+        # streamer will yield decoded text *incrementally*
+        streamer = TextIteratorStreamer(
+            self.tokenizer, skip_prompt=True, skip_special_tokens=True
+        )
+
+        gen_kwargs = dict(
+            input_ids=input_ids,
+            attention_mask=attn_mask,
+            max_new_tokens=max(1, req.max_tokens),
+            do_sample=do_sample,
+            temperature=req.temperature if do_sample else None,
+            top_p=req.top_p if do_sample else None,
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+            streamer=streamer,
+        )
+
+        # Run .generate() in a background thread, read tokens here
+        def _run():
+            try:
+                with torch.inference_mode():
+                    self.model.generate(**gen_kwargs)
+            except Exception as e:
+                logger.exception("stream generate failed: %s", e)
+                # close streamer by stopping iteration
+                try:
+                    streamer.on_finalized_text()
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+
+        # The streamer is an iterator that blocks until next chunk is available.
+        # Bridge it to an async generator:
+        loop = asyncio.get_event_loop()
+        while True:
+            chunk = await loop.run_in_executor(None, next, streamer, None)
+            if chunk is None:
+                break
+            yield chunk
 
     async def verify_batch(self, reqs: List[VerifyRequest]) -> List[VerifyResult]:
         # Accept all as a placeholder
