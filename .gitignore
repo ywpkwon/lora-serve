@@ -140,3 +140,6 @@ pip-wheel-metadata/
 *.rej
 *.snap
 *checkpoint*
+
+# ignore lora adapters
+examples/adapters/
