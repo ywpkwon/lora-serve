@@ -1,20 +1,64 @@
 
 # LoRAServe
 
-LoRAServe is a lightweight, educational project exploring how modern LLM inference systems (like vLLM and SGLang) work under the hood -- from dynamic batching and adapter hot-loading to streaming responses and KV-cache reuse.
+LoRAServe is a lightweight, educational, side project exploring how modern LLM inference systems (like vLLM and SGLang) work under the hood -- from dynamic batching and adapter hot-loading to streaming responses and KV-cache reuse. It's not a production service -- the focus is on clarity, modularity, and learning-by-doing.
 
-# Overview
+## 🚀 LoRAServe Development Roadmap
 
-This repository is a side project to understand and re-implement key design patterns in large-model serving infrastructure.
-It's not a production service -- the focus is on clarity, modularity, and learning-by-doing.
+### 🟢 Core Serving
+- [x] Dynamic batching (tenant queues + policies)
+- [x] HFEngine integration
+- [x] LoRA adapter manager (hot-load / swap)
+- [x] `/v1/generate` (non-stream)
+- [x] Streaming with TextIteratorStreamer
 
-LoRAServe aims to demystify how real LLM engines manage:
-- Dynamic batching and request queues
-- LoRA adapter hot-loading and caching
-- Token streaming (incremental responses)
-- KV-cache lifecycle management
-- Lightweight fairness and scheduling policies
-- Speculative decoding and performance instrumentation
+### 🟢 Observability
+- [x] Prometheus `/metrics` exporter
+- [x] Request latency (p50/p95/p99)
+- [x] Batch size histogram
+- [x] Queue wait histogram
+- [x] Token generation counters
+
+---
+
+### 🟡 KV Cache & Scheduling Enhancements
+- [ ] KVCacheManager (tracking only)
+- [ ] Per-request KV usage
+- [ ] KV-aware batching (cost-based)
+- [ ] Prompt prefix reuse (mini-PagedAttention)
+
+---
+
+### 🟡 Chat & API Compatibility
+- [ ] `/v1/chat` endpoint
+- [ ] Chat streaming (SSE)
+- [ ] Usage metadata (prompt_tokens, completion_tokens)
+- [ ] OpenAI-compatible schemas
+
+---
+
+### 🟠 Advanced Engine Features
+- [ ] Speculative decoding (draft = target)
+- [ ] Speculative decoding (small draft)
+- [ ] Adapter prefetching endpoint
+- [ ] Background adapter warming
+
+---
+
+### 🟠 Performance Optimizations
+- [ ] `torch.compile` / CUDA graphs
+- [ ] Pinned memory for H2D copies
+- [ ] Triton RMSNorm kernel
+- [ ] LoRA-fused matmul (Triton)
+
+---
+
+### 🔴 Deployment & Benchmarking
+- [ ] Benchmark harness (TTFT / throughput)
+- [ ] Dockerfile
+- [ ] Kubernetes manifests
+- [ ] Horizontal Pod Autoscaler (HPA)
+
 
 # Architecture at a Glance
 ```
